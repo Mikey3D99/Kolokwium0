@@ -8,7 +8,7 @@
 #include "stdio.h"
 #include "stdlib.h"
 
-#define SHM_KEY 1111
+#define SHM_KEY 8435
 #define SHM_SIZE 2048
 #define READY 1
 #define CLOSED 0
@@ -28,6 +28,7 @@ typedef struct {
     int sum;
 
 }Server;
+
 
 Server * connect_to_shared_memory(int * shmid){
     *shmid = shmget(SHM_KEY, SHM_SIZE, 0666);
@@ -77,7 +78,6 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
-
     Server * server;
     int memory_id;
     server = connect_to_shared_memory(&memory_id);
@@ -98,19 +98,17 @@ int main(int argc, char *argv[]){
         //TODO: czysczenie itp
         return -1;
     }
-
-    printf("PRZED glownym semaforze");
+    printf("przed kalkulacji");
 
     /// if not connected then you can continue with client stuff
-    if (sem_wait(&server->sem) == -1) {
-            printf("sem_wait");
-            if (shmdt(server) == -1) {
-                perror("shmdt");
-            }
-            return -1;
+    server->connected = true;
+    if (sem_post(&server->sem) == -1) {
+        printf("sem_wait");
+        if (shmdt(server) == -1) {
+            perror("shmdt");
+        }
+        return -1;
     }
-
-    printf("po glownym semaforze");
 
     if (sem_wait(&server->calculations_finished) == -1) {
         printf("sem_wait");
@@ -121,6 +119,7 @@ int main(int argc, char *argv[]){
     }
     printf("po kalkulacji");
 
+    //-------------------------------------------------------------
     if(server->sum == -1)
         printf("Waiting for server to calculate sum");
     else{
@@ -128,8 +127,8 @@ int main(int argc, char *argv[]){
         server->sum = 0;
         server->connected = false;
         server->current_number_of_nums = 0;
-        server->should_process = false;
     }
+    ///------------------------------------
 
     if (sem_post(&server->sem) == -1) {
         printf("sem_wait");
@@ -138,8 +137,6 @@ int main(int argc, char *argv[]){
         }
         return -1;
     }
-
-
 
     ///detach client from shared memory before exiting
     if (shmdt(server) == -1) {

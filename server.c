@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
-#define SHM_KEY 1111
+#define SHM_KEY 8435
 #define SHM_SIZE 2048
 #define READY 1
 #define CLOSED 0
@@ -19,7 +19,6 @@ typedef struct {
     sem_t sem;
     sem_t calculations_finished;
     sem_t server_busy;
-    //pthread_mutex_t mutex;
     int32_t array[100];
     int current_number_of_nums;
     int stat;
@@ -29,11 +28,13 @@ typedef struct {
 
 }Server;
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 int initialize_semaphore_and_mutex(Server * server){
     if(server == NULL){
         return -1;
     }
-    if(sem_init(&server->sem, 1, 1) == -1){
+    if(sem_init(&server->sem, 1, 0) == -1){
         printf("Error with semaphore initialization");
         return -2;
     }
@@ -45,7 +46,6 @@ int initialize_semaphore_and_mutex(Server * server){
         printf("Error with semaphore initialization");
         return -2;
     }
-
 
     return 0;
 }
@@ -117,7 +117,7 @@ void* process_array_calculations_thread(void* arg){
     }
 
     //check for client connection
-    while(true){
+    while(server->server_status != CLOSED){
         if (sem_wait(&server->sem) == -1) {
             perror("sem_wait");
             if (shmdt(server) == -1) {
@@ -138,18 +138,14 @@ void* process_array_calculations_thread(void* arg){
         }
 
         if(server->connected){
+
+            pthread_mutex_lock(&mutex);
             server->stat++;
-            if(server->should_process){
-                // process calculations
+            pthread_mutex_unlock(&mutex);
+            // process calculations
                 server->sum = 69;
 
-                if(sem_post(&server->server_busy) == -1){
-                    perror("sem_wait");
-                    if (shmdt(server) == -1) {
-                        perror("shmdt");
-                    }
-                    pthread_exit(NULL);
-                }
+
 
                 if(sem_post(&server->calculations_finished)== -1){
                     perror("sem_wait");
@@ -158,10 +154,17 @@ void* process_array_calculations_thread(void* arg){
                     }
                     pthread_exit(NULL);
                 }
-            }
         }
 
-        if (sem_post(&server->sem) == -1) {
+        if (sem_wait(&server->sem) == -1) {
+            perror("sem_wait");
+            if (shmdt(server) == -1) {
+                perror("shmdt");
+            }
+            pthread_exit(NULL);
+        }
+
+        if(sem_post(&server->server_busy) == -1){
             perror("sem_wait");
             if (shmdt(server) == -1) {
                 perror("shmdt");
@@ -201,44 +204,19 @@ int main(){
 
         if (strcmp(command, "quit") == 0) {
             printf("Quitting...\n");
-
-            if (sem_wait(&server->sem) == -1) {
-                perror("sem_wait");
-                if (shmdt(server) == -1) {
-                    perror("shmdt");
-                }
-                pthread_exit(NULL);
+            pthread_mutex_lock(&mutex);
+            if(!server->connected){
+                sem_post(&server->sem);
             }
-
             server->server_status = CLOSED;
-
-            if (sem_post(&server->sem) == -1) {
-                perror("sem_wait");
-                if (shmdt(server) == -1) {
-                    perror("shmdt");
-                }
-                pthread_exit(NULL);
-            }
+            pthread_mutex_unlock(&mutex);
             break;
         }
         else if(strcmp(command, "stat") == 0){
-            if (sem_wait(&server->sem) == -1) {
-                perror("sem_wait");
-                if (shmdt(server) == -1) {
-                    perror("shmdt");
-                }
-                pthread_exit(NULL);
-            }
 
+            pthread_mutex_lock(&mutex);
             printf("Stat: [%d]", server->stat);
-
-            if (sem_post(&server->sem) == -1) {
-                perror("sem_wait");
-                if (shmdt(server) == -1) {
-                    perror("shmdt");
-                }
-                pthread_exit(NULL);
-            }
+            pthread_mutex_unlock(&mutex);
         }
         else {
             printf("Unknown command: %s\n", command);
@@ -250,6 +228,7 @@ int main(){
     if (shmdt(server) == -1) {
         perror("shmdt");
     }
+    pthread_mutex_destroy(&mutex);
     //TODO: free resources
     return 0;
 }
