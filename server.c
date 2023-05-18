@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
-#define SHM_KEY 8435
+#define SHM_KEY 8434
 #define SHM_SIZE 2048
 #define READY 1
 #define CLOSED 0
@@ -19,12 +19,12 @@ typedef struct {
     sem_t sem;
     sem_t calculations_finished;
     sem_t server_busy;
-    int32_t array[100];
-    int current_number_of_nums;
+    int32_t * mem_for_numbers;
+    bool asc_desc;
+    int number_of_elems;
     int stat;
     bool connected;
-    bool should_process;
-    int sum;
+    int shm_key;
 
 }Server;
 
@@ -90,6 +90,23 @@ int create_and_attach_shared_memory(Server** server){
 
     return shmid;
 }
+void bubleSort(int32_t * arr, int n)
+{
+    int32_t temp;
+    int i,j;
+    if(n > 0){
+        for(i = 0; i < n - 1; i++){
+            for(j = 0; j < n - i - 1; j++){
+                if( *(arr + j) > *(arr + j + 1)){
+                    temp = *(arr + j);
+                    *(arr + j) = *(arr + j + 1);
+                    *(arr + j + 1) = temp;
+                }
+            }
+        }
+    }
+}
+
 
 int server_init(Server ** server){
     int shmid = create_and_attach_shared_memory(server);
@@ -97,16 +114,19 @@ int server_init(Server ** server){
         initialize_semaphore_and_mutex(*server);
         (*server)->stat = 0;
         (*server)->server_status = READY;
-        (*server)->current_number_of_nums = 0;
-        (*server)->sum = -1;
+        (*server)->asc_desc = false;
+        (*server)->mem_for_numbers = NULL;
         (*server)->server_pid = getpid();
         (*server)->connected = false;
-        (*server)->should_process = false;
+        (*server)->number_of_elems = 0;
+        (*server)->shm_key = 0;
         return 0;
     }
 
     return -1;
 }
+
+
 
 //threaded function to process all server actions
 void* process_array_calculations_thread(void* arg){
@@ -143,7 +163,19 @@ void* process_array_calculations_thread(void* arg){
             server->stat++;
             pthread_mutex_unlock(&mutex);
             // process calculations
-                server->sum = 69;
+            //printf("%d", server->number_of_elems);
+
+            int shmid= shmget(server->shm_key, SHM_SIZE, 0666);
+            if(shmid < 0){
+                return NULL;
+            }
+
+            int32_t * numbers = (int32_t *)shmat(shmid, NULL, 0);
+            if(numbers == (int32_t *)-1){
+                return NULL;
+            }
+
+            bubleSort(numbers, server->number_of_elems);
 
 
 
