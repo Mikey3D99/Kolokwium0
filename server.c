@@ -8,6 +8,12 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
 #define SHM_KEY 8434
 #define SHM_SIZE 2048
 #define READY 1
@@ -24,7 +30,8 @@ typedef struct {
     int number_of_elems;
     int stat;
     bool connected;
-    int shm_key;
+    char shm_name[64];
+
 
 }Server;
 
@@ -119,7 +126,6 @@ int server_init(Server ** server){
         (*server)->server_pid = getpid();
         (*server)->connected = false;
         (*server)->number_of_elems = 0;
-        (*server)->shm_key = 0;
         return 0;
     }
 
@@ -138,6 +144,8 @@ void* process_array_calculations_thread(void* arg){
 
     //check for client connection
     while(server->server_status != CLOSED){
+        printf("test");
+        fflush(stdout);
         if (sem_wait(&server->sem) == -1) {
             perror("sem_wait");
             if (shmdt(server) == -1) {
@@ -157,36 +165,48 @@ void* process_array_calculations_thread(void* arg){
             break;
         }
 
-        if(server->connected){
 
+        if(server->connected) {
             pthread_mutex_lock(&mutex);
             server->stat++;
             pthread_mutex_unlock(&mutex);
-            // process calculations
-            //printf("%d", server->number_of_elems);
 
-            int shmid= shmget(server->shm_key, SHM_SIZE, 0666);
-            if(shmid < 0){
+            // Open the shared memory object
+            int shm_fd = shm_open(server->shm_name, O_RDWR, 0666);
+            if(shm_fd == -1) {
+                perror("shm_open");
                 return NULL;
             }
 
-            int32_t * numbers = (int32_t *)shmat(shmid, NULL, 0);
-            if(numbers == (int32_t *)-1){
+            // Map the shared memory object into this process's memory
+            int32_t * numbers = mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+            if(numbers == MAP_FAILED) {
+                perror("mmap");
                 return NULL;
             }
 
-            bubleSort(numbers, server->number_of_elems);
+            for(int i = 0; i < server->number_of_elems; i++){
+                *(numbers + i) = *(numbers + i) + 1;
+                printf("%d ", *(numbers + i));
+            }
 
+            // detach from shared mem
+            if(munmap(numbers, SHM_SIZE) == -1) {
+                perror("munmap");
+            }
 
+            // Close the shared memory object
+            if(close(shm_fd) == -1) {
+                perror("close");
+            }
 
-                if(sem_post(&server->calculations_finished)== -1){
-                    perror("sem_wait");
-                    if (shmdt(server) == -1) {
-                        perror("shmdt");
-                    }
-                    pthread_exit(NULL);
-                }
+            // Signal that calculations have finished
+            if(sem_post(&server->calculations_finished) == -1) {
+                perror("sem_post");
+                pthread_exit(NULL);
+            }
         }
+
 
         if (sem_wait(&server->sem) == -1) {
             perror("sem_wait");
@@ -223,7 +243,7 @@ int main(){
     }
 
     // Command loop
-    char command[100];
+   /* char command[100];
     while (1) {
         printf("Enter a command: ");
         if (fgets(command, sizeof(command), stdin) == NULL) {
@@ -253,7 +273,7 @@ int main(){
         else {
             printf("Unknown command: %s\n", command);
         }
-    }
+    }*/
 
     pthread_join(processing_thread, NULL);
     destroy_semaphore_and_mutex(server);

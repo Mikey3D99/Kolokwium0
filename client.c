@@ -10,6 +10,12 @@
 #include <malloc.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 #define SHM_KEY 8434
 #define SHM_SIZE 2048
@@ -27,27 +33,44 @@ typedef struct {
     int number_of_elems;
     int stat;
     bool connected;
-    int shm_key;
+    char shm_name[64];
+
 
 }Server;
 
+#define SHM_NAME "shared_memory"
+char shared_mem_name[64];
 
+int32_t * create_and_attach_shared_memory_for_numbers(int number_of_items){
+    // Generate a unique shared memory object name
+    char shm_name[64];
+    snprintf(shm_name, sizeof(shm_name), "%s_%d", SHM_NAME, getpid());
 
-int32_t * create_and_attach_shared_memory_for_numbers(Server* server, int number_of_items){
-    int shmid = shmget(getpid(), sizeof(int32_t) * number_of_items, IPC_CREAT | 0666);
-    if(shmid < 0){
-        printf("error creating shared memory");
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    if(shm_fd == -1){
+        perror("shm_open");
         return NULL;
     }
 
-    void * mem = shmat(shmid, NULL, 0);
-    if (mem == (void *)-1) {
-        printf("error attaching shared memory");
-        shmctl(shmid, IPC_RMID, NULL);  // Destroy the shared memory segment
+    size_t size = sizeof(int32_t) * number_of_items;
+
+    if (ftruncate(shm_fd, size) == -1) {
+        perror("ftruncate");
+        shm_unlink(shm_name);
         return NULL;
     }
 
-    int32_t  * numbers = (int32_t *) mem;
+    void * mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (mem == MAP_FAILED) {
+        perror("mmap");
+        shm_unlink(shm_name);
+        return NULL;
+    }
+
+    int32_t * numbers = (int32_t *) mem;
+
+    // Store the shared memory name for later usage (e.g., detaching and deleting it)
+    strncpy(shared_mem_name, shm_name, 64);
 
     return numbers;
 }
@@ -141,21 +164,25 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
+
+
     ///allocate another shared memory for numbers
-    int32_t  * all = create_and_attach_shared_memory_for_numbers(server, num);
+    int32_t  * all = create_and_attach_shared_memory_for_numbers( num);
+    memcpy(all, numbers, sizeof(int32_t) * num);
 
     for(int i = 0; i < num; i++) {
-        printf("%d ", *(numbers + i));
+        printf("%d ", *(all + i));
     }
 
     ///after allocation of the numbers copy them into shared memory and determine the order
     if(strcmp(argv[2], "des") == 0){
         server->asc_desc = true;
     }
-    memcpy(all, numbers, sizeof (int32_t) * num);
-    server->shm_key = getpid();
+
+    strncpy(server->shm_name, shared_mem_name, 64);
     server->number_of_elems = num;
-    printf("%d", server->number_of_elems);
+    printf("Number of elems: [%d]\n", server->number_of_elems);
+    printf("Name of the shared mem: [%s]\n", server->shm_name);
 
 
     ///check if already one connected
@@ -165,7 +192,6 @@ int main(int argc, char *argv[]){
         //TODO: czysczenie itp
         return -1;
     }
-    printf("przed kalkulacji");
 
     /// if not connected then you can continue with client stuff
     server->connected = true;
