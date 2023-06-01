@@ -1,12 +1,10 @@
-//
-// Created by michaubob on 17.05.23.
-//
 #include "stdio.h"
 #include "semaphore.h"
 #include <pthread.h>
 #include <sys/shm.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include <stdbool.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -14,6 +12,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 #define SHM_KEY 8434
 #define SHM_SIZE 2048
 #define READY 1
@@ -25,12 +24,16 @@ typedef struct {
     sem_t sem;
     sem_t calculations_finished;
     sem_t server_busy;
-    int32_t * mem_for_numbers;
-    bool asc_desc;
     int number_of_elems;
     int stat;
+    int stat_32t;
+    int stat_16t;
+    int stat_8t;
     bool connected;
     char shm_name[64];
+    char datatype[20];
+    int max_val;
+    int min_val;
 
 
 }Server;
@@ -97,22 +100,6 @@ int create_and_attach_shared_memory(Server** server){
 
     return shmid;
 }
-void bubleSort(int32_t * arr, int n)
-{
-    int32_t temp;
-    int i,j;
-    if(n > 0){
-        for(i = 0; i < n - 1; i++){
-            for(j = 0; j < n - i - 1; j++){
-                if( *(arr + j) > *(arr + j + 1)){
-                    temp = *(arr + j);
-                    *(arr + j) = *(arr + j + 1);
-                    *(arr + j + 1) = temp;
-                }
-            }
-        }
-    }
-}
 
 
 int server_init(Server ** server){
@@ -120,9 +107,10 @@ int server_init(Server ** server){
     if(shmid != -1){
         initialize_semaphore_and_mutex(*server);
         (*server)->stat = 0;
+        (*server)->stat_16t = 0;
+        (*server)->stat_8t = 0;
+        (*server)->stat_32t= 0;
         (*server)->server_status = READY;
-        (*server)->asc_desc = false;
-        (*server)->mem_for_numbers = NULL;
         (*server)->server_pid = getpid();
         (*server)->connected = false;
         (*server)->number_of_elems = 0;
@@ -179,17 +167,37 @@ void* process_array_calculations_thread(void* arg){
             }
 
             // Map the shared memory object into this process's memory
-            int32_t * numbers = mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+            void * numbers = mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
             if(numbers == MAP_FAILED) {
                 perror("mmap");
                 return NULL;
             }
 
-            for(int i = 0; i < server->number_of_elems; i++){
-                *(numbers + i) = *(numbers + i) + 1;
-                printf("%d ", *(numbers + i));
-            }
+            ///PROCESSING THE DATA
+            printf("[%s] - datatype", server->datatype);
+            printf("[%d] - min val, [%d] - max val", server->min_val, server->max_val);
+            if(strcmp("uint8_t", server->datatype) == 0){
+                server->stat_8t++;
+                uint8_t * nums = (uint8_t *)numbers;
+                for(int i = 0; i < server->number_of_elems; i++){
+                    *(nums + i) = (rand() %(server->max_val - server->min_val + 1)) + server->min_val;
+                }
 
+            }
+            else if(strcmp("uint16_t", server->datatype) == 0){
+                server->stat_16t++;
+                uint16_t * nums = (uint16_t *)numbers;
+                for(int i = 0; i < server->number_of_elems; i++){
+                    *(nums + i) = (rand() %(server->max_val - server->min_val + 1)) + server->min_val;
+                }
+            }
+            else if(strcmp("uint32_t", server->datatype) == 0){
+                server->stat_32t++;
+                uint32_t * nums = (uint32_t *)numbers;
+                for(int i = 0; i < server->number_of_elems; i++){
+                    *(nums + i) = (rand() %(server->max_val - server->min_val + 1)) + server->min_val;
+                }
+            }
             // detach from shared mem
             if(munmap(numbers, SHM_SIZE) == -1) {
                 perror("munmap");
@@ -267,7 +275,9 @@ int main(){
         else if(strcmp(command, "stat") == 0){
 
             pthread_mutex_lock(&mutex);
-            printf("Stat: [%d]", server->stat);
+            printf("Stat for uint_8t: [%d]\n", server->stat_8t);
+            printf("Stat for uint_16t: [%d]\n", server->stat_16t);
+            printf("Stat for uint_32t: [%d]\n", server->stat_32t);
             pthread_mutex_unlock(&mutex);
         }
         else {

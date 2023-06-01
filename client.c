@@ -1,20 +1,13 @@
-//
-// Created by michaubob on 17.05.23.
-//
 #include <stdbool.h>
 #include <sys/shm.h>
 #include <semaphore.h>
 #include <signal.h>
 #include "stdio.h"
-#include "stdlib.h"
-#include <malloc.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <stdio.h>
-#include <unistd.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #define SHM_KEY 8434
@@ -28,12 +21,16 @@ typedef struct {
     sem_t sem;
     sem_t calculations_finished;
     sem_t server_busy;
-    int32_t * mem_for_numbers;
-    bool asc_desc;
     int number_of_elems;
     int stat;
+    int stat_32t;
+    int stat_16t;
+    int stat_8t;
     bool connected;
     char shm_name[64];
+    char datatype[20];
+    int max_val;
+    int min_val;
 
 
 }Server;
@@ -41,7 +38,7 @@ typedef struct {
 #define SHM_NAME "shared_memory"
 char shared_mem_name[64];
 
-int32_t * create_and_attach_shared_memory_for_numbers(int number_of_items){
+void * create_and_attach_shared_memory_for_numbers(int number_of_items, char datatype[]){
     // Generate a unique shared memory object name
     char shm_name[64];
     snprintf(shm_name, sizeof(shm_name), "%s_%d", SHM_NAME, getpid());
@@ -52,7 +49,22 @@ int32_t * create_and_attach_shared_memory_for_numbers(int number_of_items){
         return NULL;
     }
 
-    size_t size = sizeof(int32_t) * number_of_items;
+    size_t size;
+    if(strcmp("uint8_t", datatype) == 0){
+        printf("[u int 8]\n");
+        size = sizeof (uint8_t) * number_of_items;
+    }
+    else if(strcmp("uint16_t", datatype) == 0){
+        printf("[u int 16]\n");
+        size = sizeof (uint16_t) * number_of_items;
+    }
+    else if(strcmp("uint32_t", datatype) == 0){
+        printf("[u int 32]\n");
+        size = sizeof (uint32_t) * number_of_items;
+    }
+    else{
+        return NULL;
+    }
 
     if (ftruncate(shm_fd, size) == -1) {
         perror("ftruncate");
@@ -67,7 +79,7 @@ int32_t * create_and_attach_shared_memory_for_numbers(int number_of_items){
         return NULL;
     }
 
-    int32_t * numbers = (int32_t *) mem;
+    void * numbers = mem;
 
     // Store the shared memory name for later usage (e.g., detaching and deleting it)
     strncpy(shared_mem_name, shm_name, 64);
@@ -89,66 +101,37 @@ Server * connect_to_shared_memory(int * shmid){
     return server;
 }
 
-
-int count_numbers_from_file(const char * filename){
-    FILE * file = fopen(filename, "r");
-    if(file == NULL){
-        perror("Unable to open file");
-        return -1;
-    }
-
-    int count = 0;
-    int temp = 0;
-
-    while (fscanf(file, "%d\n", &temp) == 1) {
-        //printf("%d", temp);
-        count++;
-    }
-    return count;
-}
-
-
-int32_t * read_numbers_from_file(const char* filename, int max_numbers){
-    FILE* file = fopen(filename, "r");
-    if (file == NULL){
-        perror("Unable to open file");
-        return NULL;
-    }
-
-    //malloc
-    int32_t * numbers = (int32_t * )malloc(sizeof(int32_t) * max_numbers);
-    if(numbers == NULL){
-        perror("Unable to allocate memory");
-        return NULL;
-    }
-
-    int count = 0;
-    while (count < max_numbers && fscanf(file, "%d", numbers + count) == 1) {
-        count++;
-    }
-
-    fclose(file);
-
-    return numbers;  // return the number of integers read
-}
-
 int main(int argc, char *argv[]){
-    if(argc != 3){
+    if(argc != 5){
         printf("Wrong number of arguments!\n");
         return 1;
     }
 
-    char * filename = argv[1];
-    int num = count_numbers_from_file(filename);
-    /// now we know how much data has to be created
 
-    ///read the file
-    int32_t * numbers = read_numbers_from_file(filename, num);
-    if(numbers == NULL){
-        printf("error while reading numbers from file");
+    int number_of_elements = 0;
+    int max_val = 0;
+    int min_val = 0;
+    char datatype[20];
+    if(!sscanf(argv[2], "%d", &number_of_elements)){
+        printf("Error scaning argument");
         return -1;
     }
-   // bubbleSort(numbers, num);
+    if(!sscanf(argv[1], "%s", datatype)){
+        printf("Error scaning argument");
+        return -1;
+    }
+    if(!sscanf(argv[3], "%d", &min_val)){
+        printf("Error scaning argument");
+        return -1;
+    }
+    if(!sscanf(argv[4], "%d", &max_val)){
+        printf("Error scaning argument");
+        return -1;
+    }
+
+    printf("Datatype [%s], min val[%d], max val[%d]", datatype, min_val, max_val);
+
+    /// now we know how much data has to be created
 
 
     Server * server;
@@ -164,23 +147,15 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
-
-
     ///allocate another shared memory for numbers
-    int32_t  * all = create_and_attach_shared_memory_for_numbers( num);
-    memcpy(all, numbers, sizeof(int32_t) * num);
 
-    for(int i = 0; i < num; i++) {
-        printf("%d ", *(all + i));
-    }
-
-    ///after allocation of the numbers copy them into shared memory and determine the order
-    if(strcmp(argv[2], "des") == 0){
-        server->asc_desc = true;
-    }
+    void  * all = create_and_attach_shared_memory_for_numbers( number_of_elements, datatype);
 
     strncpy(server->shm_name, shared_mem_name, 64);
-    server->number_of_elems = num;
+    server->number_of_elems = number_of_elements;
+    server->max_val = max_val;
+    server->min_val = min_val;
+    strcpy(server->datatype,datatype); // copy the data type to server
     printf("Number of elems: [%d]\n", server->number_of_elems);
     printf("Name of the shared mem: [%s]\n", server->shm_name);
 
@@ -212,14 +187,31 @@ int main(int argc, char *argv[]){
     }
     printf("po kalkulacji");
 
-    //-------------------------------------------------------------
-
-        for(int i = 0; i < num; i++) {
-            printf("%d ", *(all + i));
+    if(strcmp("uint8_t", datatype) == 0){
+        uint8_t * nums = (uint8_t *)all;
+        for(int i = 0; i < number_of_elements; i++){
+            printf("[%d]", *(nums + i));
         }
+
+    }
+    else if(strcmp("uint16_t", datatype) == 0){
+        uint16_t * nums = (uint16_t *)all;
+        for(int i = 0; i < number_of_elements; i++){
+            printf("[%d]", *(nums + i));
+        }
+    }
+    else if(strcmp("uint32_t", datatype) == 0){
+        uint32_t * nums = (uint32_t *)all;
+        for(int i = 0; i < number_of_elements; i++){
+            printf("[%d]", *(nums + i));
+        }
+    }
+
+    //-------------------------------------------------------------
         server->connected = false;
-        server->asc_desc = false;
         server->number_of_elems = 0;
+        server->min_val = 0;
+        server->max_val = 0;
     ///------------------------------------
 
     if (sem_post(&server->sem) == -1) {
